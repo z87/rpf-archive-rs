@@ -12,12 +12,15 @@ const EMBEDDED_MAGIC: &[u8] = include_bytes!("../../resources/magic.dat");
 
 const NG_KEY_BYTES: usize = 101 * 272;
 const NG_TABLE_BYTES: usize = 17 * 16 * 1024;
+const LUT_BYTES: usize = 256;
+const AWC_KEY_BYTES: usize = 16;
 
 /// GTA V cryptographic keys needed for RPF decryption.
 pub struct GtaKeys {
     pub aes_key: [u8; 32],
     pub ng_keys: Vec<Vec<u8>>,
     pub ng_decrypt_tables: Box<[[[u32; 256]; 16]; 17]>,
+    pub awc_key: [u32; 4],
 }
 
 impl GtaKeys {
@@ -39,7 +42,7 @@ impl GtaKeys {
             .context("Missing gtav_ng_decrypt_tables.dat")?;
         let ng_decrypt_tables = read_ng_tables(&ng_table_bytes)?;
 
-        Ok(Self { aes_key, ng_keys, ng_decrypt_tables })
+        Ok(Self { aes_key, ng_keys, ng_decrypt_tables, awc_key: [0u32; 4] })
     }
 
     /// Extract keys from a GTA5.exe and optionally save them to a directory.
@@ -56,15 +59,25 @@ impl GtaKeys {
 
         let magic = unwrap_magic(EMBEDDED_MAGIC, &aes_key)?;
         let ng_keys = read_ng_keys(&magic[..NG_KEY_BYTES])?;
-        let ng_decrypt_tables = read_ng_tables(&magic[NG_KEY_BYTES..])?;
+        let ng_decrypt_tables = read_ng_tables(&magic[NG_KEY_BYTES..][..NG_TABLE_BYTES])?;
+        let awc_key = read_awc_key(&magic[NG_KEY_BYTES + NG_TABLE_BYTES + LUT_BYTES..][..AWC_KEY_BYTES]);
 
-        let keys = Self { aes_key, ng_keys, ng_decrypt_tables };
+        let keys = Self { aes_key, ng_keys, ng_decrypt_tables, awc_key };
 
         if let Some(out_path) = save_to {
             keys.save_to_path(out_path)?;
         }
 
         Ok(keys)
+    }
+
+    pub fn load_from_embedded(aes_key: [u8; 32]) -> Result<Self> {
+        let magic = unwrap_magic(EMBEDDED_MAGIC, &aes_key)?;
+        let ng_keys = read_ng_keys(&magic[..NG_KEY_BYTES])?;
+        let ng_decrypt_tables = read_ng_tables(&magic[NG_KEY_BYTES..][..NG_TABLE_BYTES])?;
+        let awc_key = read_awc_key(&magic[NG_KEY_BYTES + NG_TABLE_BYTES + LUT_BYTES..][..AWC_KEY_BYTES]);
+
+        Ok(Self { aes_key, ng_keys, ng_decrypt_tables, awc_key })
     }
 
     pub fn save_to_path(&self, path: &Path) -> Result<()> {
@@ -138,6 +151,14 @@ fn write_ng_tables(tables: &[[[u32; 256]; 16]; 17]) -> Vec<u8> {
     out
 }
 
+fn read_awc_key(data: &[u8]) -> [u32; 4] {
+    let mut key = [0u32; 4];
+    for (word, bytes) in key.iter_mut().zip(data.chunks_exact(4)) {
+        *word = u32::from_le_bytes(bytes.try_into().unwrap()) ^ 0x7B3A207F;
+    }
+    key
+}
+
 fn search_hash(data: &[u8], expected_sha1: &[u8; 20], length: usize) -> Option<Vec<u8>> {
     if data.len() < length {
         return None;
@@ -176,7 +197,7 @@ fn unwrap_magic(magic: &[u8], aes_key: &[u8; 32]) -> Result<Vec<u8>> {
         .read_to_end(&mut out)
         .context("failed to inflate magic data — AES key does not match it")?;
 
-    let expected = NG_KEY_BYTES + NG_TABLE_BYTES;
+    let expected = NG_KEY_BYTES + NG_TABLE_BYTES + LUT_BYTES + AWC_KEY_BYTES;
     if out.len() < expected {
         bail!("magic data too small: {} bytes (expected at least {})", out.len(), expected);
     }
