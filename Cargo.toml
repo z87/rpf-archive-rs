@@ -1,0 +1,13 @@
+[package]
+name = "rpf_archive"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+rpf-archive = { git = "https://github.com/z87/rpf-archive-rs.git", branch = "main" }
+
+[profile.release]
+panic = "abort"
