@@ -1,0 +1,43 @@
+name: release
+
+on:
+  push:
+    branches: [ "main", "ffi" ]
+  pull_request:
+    branches: [ "main", "ffi" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: "ffi"
+
+      - name: Build DLL
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Stage release
+        run: |
+            mkdir release
+            copy include\*.h release\
+            copy target\x86_64-pc-windows-msvc\release\*.dll release\
+            copy target\x86_64-pc-windows-msvc\release\*.dll.lib release\
+            powershell Compress-Archive -Path release\* -DestinationPath rpf-archive-windows-msvc.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: rpf-archive-windows-msvc
+          path: rpf-archive-windows-msvc.zip
+
+      - name: Upload release
+        if: github.event_name != 'pull_request'
+        uses: svenstaro/upload-release-action@2.11.5
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          release_name: rpf-archive-windows-msvc
+          file: rpf-archive-windows-msvc.zip
+          overwrite: true
