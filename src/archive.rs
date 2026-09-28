@@ -158,7 +158,7 @@ impl RpfArchive {
             RpfVersion::V8   => parse_rpf8_toc(d)?,
             RpfVersion::Img2 => parse_img2_toc(d)?,
             RpfVersion::Img3 => parse_img3_toc(d)?,
-            _                => parse_rpf2_toc(d, version)?,
+            _                => parse_rpf2_toc(d, version, keys)?,
         };
 
         let mut archive = Self { name: name.to_string(), start_offset: offset, encryption, entries, version };
@@ -668,7 +668,7 @@ fn parse_rpf0_entries(entries_data: &[u8], names_data: &[u8], count: usize) -> R
 
 // ─── RPF2/3/4 TOC ────────────────────────────────────────────────────────────
 
-fn parse_rpf2_toc(d: &[u8], version: RpfVersion) -> Result<(Vec<RpfEntry>, RpfEncryption)> {
+fn parse_rpf2_toc(d: &[u8], version: RpfVersion, keys: Option<&GtaKeys>) -> Result<(Vec<RpfEntry>, RpfEncryption)> {
     if d.len() < 24 { bail!("RPF2 header too short"); }
     let header_size    = u32::from_le_bytes(d[4..8].try_into().unwrap()) as usize;
     let entry_count    = u32::from_le_bytes(d[8..12].try_into().unwrap()) as usize;
@@ -680,15 +680,29 @@ fn parse_rpf2_toc(d: &[u8], version: RpfVersion) -> Result<(Vec<RpfEntry>, RpfEn
 
     if d.len() < toc_start + entries_size + names_size { bail!("RPF2 TOC truncated"); }
 
-    let entries_data = d[toc_start..toc_start + entries_size].to_vec();
-    let names_data   = d[toc_start + entries_size..toc_start + entries_size + names_size].to_vec();
+    let mut entries_data = d[toc_start..toc_start + entries_size].to_vec();
+    let mut names_data   = d[toc_start + entries_size..toc_start + entries_size + names_size].to_vec();
 
     let encryption = if decryption_tag != 0 {
-        eprintln!("[RPF2] encrypted TOC (tag={:#010x}): GTA IV key not supported", decryption_tag);
         RpfEncryption::Aes
     } else {
         RpfEncryption::None
     };
+
+    match (version, encryption, keys) {
+        (RpfVersion::V2 | RpfVersion::V3, RpfEncryption::Aes, Some(k)) => {
+            for _ in 0..16 {
+                entries_data = decrypt_aes(&entries_data, &k.aes_key);
+                if version == RpfVersion::V2 {
+                    names_data = decrypt_aes(&names_data, &k.aes_key);
+                }
+            }
+        }
+        (_, RpfEncryption::Aes, _) => {
+            eprintln!("[RPF2] AES-encrypted TOC (tag={:#010x}): key not supported", decryption_tag);
+        }
+        _ => {}
+    }
 
     let entries = parse_rpf2_entries(&entries_data, &names_data, entry_count, version)?;
     Ok((entries, encryption))

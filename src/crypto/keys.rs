@@ -53,6 +53,13 @@ impl GtaKeys {
     pub fn extract_from_exe(exe_path: &Path, save_to: Option<&Path>) -> Result<Self> {
         let exe_data = fs::read(exe_path).context("Failed to read GTA5.exe")?;
 
+        if exe_path.file_name().and_then(|n| n.to_str()).unwrap_or_default() == "GTAIV.exe" {
+            let aes_bytes = search_hash(&exe_data, &IV_AES_KEY_HASH, 32)
+                .context("AES key not found — is this a GTA IV executable?")?;
+            let keys = Self { aes_key: aes_bytes.try_into().unwrap(), ng_keys: vec![], ng_decrypt_tables: Box::new([[[0u32; 256]; 16]; 17]), awc_key: [0u32; 4] };
+            return Ok(keys);
+        }
+
         let aes_bytes = search_hash(&exe_data, &PC_AES_KEY_HASH, 32)
             .context("AES key not found — is this a GTA V PC executable?")?;
         let aes_key: [u8; 32] = aes_bytes.try_into().unwrap();
@@ -295,6 +302,11 @@ impl DotNetRandom {
 static PC_AES_KEY_HASH: [u8; 20] = [
     0xA0, 0x79, 0x61, 0x28, 0xA7, 0x75, 0x72, 0x0A, 0xC2, 0x04,
     0xD9, 0x81, 0x9F, 0x68, 0xC1, 0x72, 0xE3, 0x95, 0x2C, 0x6D,
+];
+
+static IV_AES_KEY_HASH: [u8; 20] = [
+    0xDE, 0xA3, 0x75, 0xEF, 0x1E, 0x6E, 0xF2, 0x22, 0x3A, 0x12,
+    0x21, 0xC2, 0xC5, 0x75, 0xC4, 0x7B, 0xF1, 0x7E, 0xFA, 0x5E
 ];
 
 #[cfg(test)]
